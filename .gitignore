@@ -1,0 +1,6 @@
+/build/
+/guest-adbd/target/
+/dist/
+*.swp
+*.swo
+*~
