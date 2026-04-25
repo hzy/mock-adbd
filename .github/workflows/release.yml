@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq cpio qemu-system-x86
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install adb
+        run: |
+          wget -q https://dl.google.com/android/repository/platform-tools-latest-linux.zip
+          unzip -q platform-tools-latest-linux.zip
+          echo "$PWD/platform-tools" >> $GITHUB_PATH
+
+      - name: Build
+        run: bash scripts/ci-build.sh
+
+      - name: Test
+        run: bash tests/integration_test.sh
+
+      - name: Get version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: mock-adbd ${{ steps.version.outputs.version }}
+          body: |
+            ## Usage
+
+            ```bash
+            # Download
+            curl -fsSL -o mock-adbd.sh https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/mock-adbd.sh
+            chmod +x mock-adbd.sh
+
+            # Run
+            ./mock-adbd.sh
+
+            # Connect
+            adb connect localhost:5555
+            adb shell
+            ```
+
+            See [README](https://github.com/${{ github.repository }}#readme) for more options.
+          files: dist/mock-adbd.sh
+          generate_release_notes: true
