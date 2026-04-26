@@ -32,15 +32,11 @@ fi
 
 # Auto-select port if port=0
 if [ "$ADB_PORT" = "0" ]; then
-    if command -v python3 &>/dev/null; then
-        ADB_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
-    else
-        for _c in $(shuf -i 49152-65000 -n 200); do
-            if ! ss -tlnH "sport = :$_c" 2>/dev/null | grep -q .; then
-                ADB_PORT=$_c; break
-            fi
-        done
-    fi
+    for _c in $(shuf -i 49152-65000 -n 200); do
+        if ! (echo >/dev/tcp/localhost/$_c) 2>/dev/null; then
+            ADB_PORT=$_c; break
+        fi
+    done
     [ "$ADB_PORT" = "0" ] && { echo "ERROR: Could not find a free port." >&2; exit 1; }
 fi
 
