@@ -124,7 +124,23 @@ echo "Booting VM... (Ctrl+C to stop)"
 echo "After boot:  adb connect localhost:${ADB_PORT}"
 echo ""
 
-exec "${QEMU_CMD[@]}"
+# QEMU -nographic hijacks stdin and captures Ctrl+C for the guest.
+# Detach stdin so Ctrl+C goes to our shell wrapper instead.
+"${QEMU_CMD[@]}" </dev/null &
+QEMU_PID=$!
+
+shutdown() {
+    echo ""
+    echo "Shutting down..."
+    kill "$QEMU_PID" 2>/dev/null || true
+    wait "$QEMU_PID" 2>/dev/null || true
+    exit 0
+}
+trap shutdown INT TERM
+
+while kill -0 "$QEMU_PID" 2>/dev/null; do
+    wait "$QEMU_PID" 2>/dev/null || true
+done
 
 # This line must be last before the binary payload
 __PAYLOAD_BEGINS__

@@ -45,4 +45,9 @@ echo "  Memory:  $QEMU_MEM"
 echo "  Connect: adb connect localhost:$ADB_PORT"
 echo ""
 
-exec "${QEMU_CMD[@]}"
+"${QEMU_CMD[@]}" </dev/null &
+QEMU_PID=$!
+trap 'echo ""; echo "Shutting down..."; kill $QEMU_PID 2>/dev/null; wait $QEMU_PID 2>/dev/null; exit 0' INT TERM
+while kill -0 "$QEMU_PID" 2>/dev/null; do
+    wait "$QEMU_PID" 2>/dev/null || true
+done
