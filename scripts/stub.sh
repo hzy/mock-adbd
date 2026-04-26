@@ -97,14 +97,20 @@ fi
 
 # --- Auto-select port if port=0 ---
 if [ "$ADB_PORT" = "0" ]; then
-    # Pick a random unused port from the ephemeral range.
-    # Try to connect — if connection refused, the port is free.
-    for _candidate in $(shuf -i 49152-65000 -n 200); do
-        if ! (echo >/dev/tcp/localhost/$_candidate) 2>/dev/null; then
-            ADB_PORT=$_candidate
-            break
-        fi
-    done
+    # Use python3 (available on all CI and macOS) to let the kernel pick a port.
+    # Bind, get port, close. Tiny TOCTOU window — acceptable for CI use.
+    if command -v python3 &>/dev/null; then
+        ADB_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
+    else
+        # Fallback: pick from ephemeral range, check with ss/netstat
+        for _candidate in $(shuf -i 49152-65000 -n 200); do
+            if ! ss -tlnH "sport = :$_candidate" 2>/dev/null | grep -q . && \
+               ! netstat -tln 2>/dev/null | grep -q ":$_candidate "; then
+                ADB_PORT=$_candidate
+                break
+            fi
+        done
+    fi
     if [ "$ADB_PORT" = "0" ]; then
         echo "ERROR: Could not find a free port." >&2
         exit 1
