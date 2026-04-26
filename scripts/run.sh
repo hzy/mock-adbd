@@ -43,7 +43,6 @@ if [ "$ADB_PORT" = "0" ]; then
     fi
     [ "$ADB_PORT" = "0" ] && { echo "ERROR: Could not find a free port." >&2; exit 1; }
 fi
-fi
 
 KERNEL_APPEND="console=ttyS0 panic=1 net.ifnames=0"
 $DEBUG || KERNEL_APPEND="$KERNEL_APPEND quiet"
