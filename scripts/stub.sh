@@ -97,15 +97,13 @@ fi
 
 # --- Auto-select port if port=0 ---
 if [ "$ADB_PORT" = "0" ]; then
-    # Use python3 (available on all CI and macOS) to let the kernel pick a port.
-    # Bind, get port, close. Tiny TOCTOU window — acceptable for CI use.
-    if command -v python3 &>/dev/null; then
-        ADB_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
-    else
-        # Fallback: pick from ephemeral range, check with ss/netstat
+    # Try python3 first (atomic kernel allocation, no TOCTOU)
+    ADB_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()" 2>/dev/null || true)
+    # Fallback: bash /dev/tcp probe
+    if [ -z "$ADB_PORT" ] || [ "$ADB_PORT" = "0" ]; then
+        ADB_PORT=0
         for _candidate in $(shuf -i 49152-65000 -n 200); do
-            if ! ss -tlnH "sport = :$_candidate" 2>/dev/null | grep -q . && \
-               ! netstat -tln 2>/dev/null | grep -q ":$_candidate "; then
+            if ! (echo >/dev/tcp/localhost/$_candidate) 2>/dev/null; then
                 ADB_PORT=$_candidate
                 break
             fi

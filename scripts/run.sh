@@ -32,16 +32,17 @@ fi
 
 # Auto-select port if port=0
 if [ "$ADB_PORT" = "0" ]; then
-    if command -v python3 &>/dev/null; then
-        ADB_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
-    else
+    ADB_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()" 2>/dev/null || true)
+    if [ -z "$ADB_PORT" ] || [ "$ADB_PORT" = "0" ]; then
+        ADB_PORT=0
         for _c in $(shuf -i 49152-65000 -n 200); do
-            if ! ss -tlnH "sport = :$_c" 2>/dev/null | grep -q .; then
+            if ! (echo >/dev/tcp/localhost/$_c) 2>/dev/null; then
                 ADB_PORT=$_c; break
             fi
         done
     fi
     [ "$ADB_PORT" = "0" ] && { echo "ERROR: Could not find a free port." >&2; exit 1; }
+fi
 fi
 
 KERNEL_APPEND="console=ttyS0 panic=1 net.ifnames=0"
