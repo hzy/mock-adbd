@@ -1,6 +1,7 @@
 mod protocol;
 mod session;
 mod shell_v2;
+mod sync;
 
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -71,6 +72,7 @@ fn send_message(stream: &mut TcpStream, msg: &AdbMessage) -> io::Result<()> {
 enum Service {
     ShellV1(Option<String>),        // shell: or shell:command
     ShellV2(Option<String>),        // shell,v2: or shell,v2:command
+    Sync,                           // sync:
     Other(String),                  // Unsupported
 }
 
@@ -78,7 +80,9 @@ fn parse_service(dest: &str) -> Service {
     // Remove trailing null
     let dest = dest.trim_end_matches('\0');
 
-    if dest == "shell:" || dest == "shell" {
+    if dest == "sync:" || dest == "sync" {
+        Service::Sync
+    } else if dest == "shell:" || dest == "shell" {
         Service::ShellV1(None)
     } else if dest.starts_with("shell:") {
         let cmd = &dest[6..];
@@ -182,6 +186,13 @@ fn handle_connection(mut stream: TcpStream) -> io::Result<()> {
                                     }
                                 }
                             }
+                            Service::Sync => {
+                                let local_id = sessions.alloc_local_id();
+                                let sync_sess = sync::SyncSession::new(local_id, remote_id);
+                                sessions.sync_sessions.insert(local_id, sync_sess);
+                                let okay = AdbMessage::okay(local_id, remote_id);
+                                send_message(&mut stream, &okay)?;
+                            }
                             Service::Other(svc) => {
                                 warn!("Unsupported service: {:?}", svc);
                                 let clse = AdbMessage::clse(0, remote_id);
@@ -197,7 +208,16 @@ fn handle_connection(mut stream: TcpStream) -> io::Result<()> {
                         let okay = AdbMessage::okay(local_id, remote_id);
                         send_message(&mut stream, &okay)?;
 
-                        if let Some(session) = sessions.get_mut(local_id) {
+                        if let Some(sync_sess) = sessions.sync_sessions.get_mut(&local_id) {
+                            let resp_data = sync_sess.handle_data(&msg.data);
+                            if !resp_data.is_empty() {
+                                // Split large responses into multiple WRTEs
+                                for chunk in resp_data.chunks(protocol::MAX_PAYLOAD as usize) {
+                                    let wrte = AdbMessage::wrte(local_id, remote_id, chunk.to_vec());
+                                    send_message(&mut stream, &wrte)?;
+                                }
+                            }
+                        } else if let Some(session) = sessions.get_mut(local_id) {
                             if session.v2 {
                                 // Parse shell v2 frames from the data
                                 let mut offset = 0;
@@ -267,6 +287,9 @@ fn handle_connection(mut stream: TcpStream) -> io::Result<()> {
 
                         if let Some(session) = sessions.remove(local_id) {
                             let clse = AdbMessage::clse(session.local_id, session.remote_id);
+                            send_message(&mut stream, &clse)?;
+                        } else if let Some(sync_sess) = sessions.sync_sessions.remove(&local_id) {
+                            let clse = AdbMessage::clse(sync_sess.local_id, sync_sess.remote_id);
                             send_message(&mut stream, &clse)?;
                         }
                     }

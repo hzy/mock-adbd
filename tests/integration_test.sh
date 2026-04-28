@@ -210,6 +210,30 @@ assert_contains "getprop mock (sdk)" "30" "$OUTPUT"
 OUTPUT=$(timeout 10 adb -s "$ADB_SERIAL" shell "getprop ro.product.model" 2>&1)
 assert_contains "getprop mock (model)" "MockDevice" "$OUTPUT"
 
+# --- Test 11: ADB Push / Pull (sync protocol) ---
+echo ""
+echo "[11/11] ADB Push / Pull (sync protocol)..."
+
+# Test Push
+TEST_PUSH_FILE=$(mktemp)
+echo "push_content_123" > "$TEST_PUSH_FILE"
+OUTPUT=$(timeout 10 adb -s "$ADB_SERIAL" push "$TEST_PUSH_FILE" "/data/local/tmp/test_push.txt" 2>&1)
+rm -f "$TEST_PUSH_FILE"
+assert_contains "adb push success" "pushed" "$OUTPUT"
+
+# Verify Push in shell
+OUTPUT=$(timeout 10 adb -s "$ADB_SERIAL" shell "cat /data/local/tmp/test_push.txt" 2>&1)
+assert_contains "pushed file content verified" "push_content_123" "$OUTPUT"
+
+# Test Pull
+TEST_PULL_DIR=$(mktemp -d)
+OUTPUT=$(timeout 10 adb -s "$ADB_SERIAL" pull "/data/local/tmp/test_push.txt" "$TEST_PULL_DIR/pulled.txt" 2>&1)
+assert_contains "adb pull success" "pulled" "$OUTPUT"
+
+PULLED_CONTENT=$(cat "$TEST_PULL_DIR/pulled.txt")
+rm -rf "$TEST_PULL_DIR"
+assert_contains "pulled file content verified" "push_content_123" "$PULLED_CONTENT"
+
 # ============================================================
 echo "  Results: $PASS passed, $FAIL failed (total $TOTAL)"
 echo "========================================"

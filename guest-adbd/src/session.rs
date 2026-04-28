@@ -211,6 +211,7 @@ impl Drop for ShellSession {
 /// Manages all active shell sessions
 pub struct SessionManager {
     sessions: HashMap<u32, ShellSession>,
+    pub sync_sessions: HashMap<u32, crate::sync::SyncSession>,
     next_local_id: u32,
 }
 
@@ -218,6 +219,7 @@ impl SessionManager {
     pub fn new() -> Self {
         Self {
             sessions: HashMap::new(),
+            sync_sessions: HashMap::new(),
             next_local_id: 1,
         }
     }
@@ -251,6 +253,7 @@ impl SessionManager {
 
     pub fn clear(&mut self) {
         self.sessions.clear();
+        self.sync_sessions.clear();
         self.next_local_id = 1;
     }
 }
