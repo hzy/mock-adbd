@@ -95,10 +95,10 @@ fn parse_service(dest: &str) -> Service {
             Service::ShellV2(Some(cmd.to_string()), true)
         }
     } else if dest.starts_with("shell,v2,") {
-        // shell,v2,TERM=xterm:command or shell,v2,raw:command
+        // shell,v2,TERM=xterm:command or shell,v2,raw,TERM=xterm:command
         if let Some(colon_pos) = dest.find(':') {
             let cmd = &dest[colon_pos + 1..];
-            let is_raw = dest.starts_with("shell,v2,raw:");
+            let is_raw = dest[..colon_pos].contains(",raw");
             if cmd.is_empty() {
                 Service::ShellV2(None, !is_raw)
             } else {
