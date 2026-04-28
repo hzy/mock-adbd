@@ -71,7 +71,7 @@ fn send_message(stream: &mut TcpStream, msg: &AdbMessage) -> io::Result<()> {
 #[derive(Debug)]
 enum Service {
     ShellV1(Option<String>),        // shell: or shell:command
-    ShellV2(Option<String>),        // shell,v2: or shell,v2:command
+    ShellV2(Option<String>, bool),  // command, use_pty
     Sync,                           // sync:
     Other(String),                  // Unsupported
 }
@@ -90,21 +90,22 @@ fn parse_service(dest: &str) -> Service {
     } else if dest.starts_with("shell,v2:") {
         let cmd = &dest[9..];
         if cmd.is_empty() {
-            Service::ShellV2(None)
+            Service::ShellV2(None, true)
         } else {
-            Service::ShellV2(Some(cmd.to_string()))
+            Service::ShellV2(Some(cmd.to_string()), true)
         }
     } else if dest.starts_with("shell,v2,") {
         // shell,v2,TERM=xterm:command or shell,v2,raw:command
         if let Some(colon_pos) = dest.find(':') {
             let cmd = &dest[colon_pos + 1..];
+            let is_raw = dest.starts_with("shell,v2,raw:");
             if cmd.is_empty() {
-                Service::ShellV2(None)
+                Service::ShellV2(None, !is_raw)
             } else {
-                Service::ShellV2(Some(cmd.to_string()))
+                Service::ShellV2(Some(cmd.to_string()), !is_raw)
             }
         } else {
-            Service::ShellV2(None)
+            Service::ShellV2(None, true)
         }
     } else {
         Service::Other(dest.to_string())
@@ -153,6 +154,7 @@ fn handle_connection(mut stream: TcpStream) -> io::Result<()> {
                                     remote_id,
                                     false,
                                     cmd.as_deref(),
+                                    true,
                                 ) {
                                     Ok(session) => {
                                         sessions.insert(session);
@@ -166,13 +168,14 @@ fn handle_connection(mut stream: TcpStream) -> io::Result<()> {
                                     }
                                 }
                             }
-                            Service::ShellV2(cmd) => {
+                            Service::ShellV2(cmd, use_pty) => {
                                 let local_id = sessions.alloc_local_id();
                                 match ShellSession::new(
                                     local_id,
                                     remote_id,
                                     true,
                                     cmd.as_deref(),
+                                    use_pty,
                                 ) {
                                     Ok(session) => {
                                         sessions.insert(session);
@@ -263,12 +266,14 @@ fn handle_connection(mut stream: TcpStream) -> io::Result<()> {
                                                         ws_xpixel: 0,
                                                         ws_ypixel: 0,
                                                     };
-                                                    unsafe {
-                                                        libc::ioctl(
-                                                            session.master_fd,
-                                                            libc::TIOCSWINSZ,
-                                                            &ws,
-                                                        );
+                                                    if session.stdin_fd == session.stdout_fd {
+                                                        unsafe {
+                                                            libc::ioctl(
+                                                                session.stdin_fd,
+                                                                libc::TIOCSWINSZ,
+                                                                &ws,
+                                                            );
+                                                        }
                                                     }
                                                 }
                                             }

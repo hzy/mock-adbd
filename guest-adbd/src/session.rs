@@ -9,7 +9,8 @@ pub struct ShellSession {
     pub local_id: u32,
     pub remote_id: u32,
     pub v2: bool,
-    pub master_fd: RawFd,
+    pub stdin_fd: RawFd,
+    pub stdout_fd: RawFd,
     /// Separate stderr pipe read-end (only for v2 single-command mode)
     pub stderr_fd: Option<RawFd>,
     pub child_pid: libc::pid_t,
@@ -31,14 +32,35 @@ impl ShellSession {
         remote_id: u32,
         v2: bool,
         command: Option<&str>,
+        use_pty: bool,
     ) -> io::Result<Self> {
-        let mut master: RawFd = -1;
-        let mut slave: RawFd = -1;
+        let mut stdin_write: RawFd = -1;
+        let mut stdout_read: RawFd = -1;
+        let mut stdin_read: RawFd = -1;
+        let mut stdout_write: RawFd = -1;
 
-        // openpty
-        let ret = unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) };
-        if ret != 0 {
-            return Err(io::Error::last_os_error());
+        if use_pty {
+            let mut master: RawFd = -1;
+            let mut slave: RawFd = -1;
+            let ret = unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) };
+            if ret != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            stdin_write = master;
+            stdout_read = master;
+            stdin_read = slave;
+            stdout_write = slave;
+        } else {
+            let mut p_in = [0 as RawFd; 2];
+            let mut p_out = [0 as RawFd; 2];
+            unsafe {
+                libc::pipe(p_in.as_mut_ptr());
+                libc::pipe(p_out.as_mut_ptr());
+            }
+            stdin_write = p_in[1];
+            stdin_read = p_in[0];
+            stdout_read = p_out[0];
+            stdout_write = p_out[1];
         }
 
         // For v2 single-command mode, create a separate stderr pipe
@@ -46,41 +68,52 @@ impl ShellSession {
         let has_stderr_pipe = v2 && command.is_some();
         if has_stderr_pipe {
             if unsafe { libc::pipe(stderr_pipe.as_mut_ptr()) } != 0 {
-                unsafe { libc::close(master); libc::close(slave); }
                 return Err(io::Error::last_os_error());
             }
         }
 
         let pid = unsafe { libc::fork() };
         if pid < 0 {
-            unsafe { libc::close(master); libc::close(slave); }
             return Err(io::Error::last_os_error());
         }
 
         if pid == 0 {
             // Child process
             unsafe {
-                libc::close(master);
                 libc::setsid();
-                libc::ioctl(slave, libc::TIOCSCTTY as _, 0);
 
-                libc::dup2(slave, 0);
-                libc::dup2(slave, 1);
+                if use_pty {
+                    libc::close(stdin_write);
+                    libc::ioctl(stdin_read, libc::TIOCSCTTY as _, 0);
+                } else {
+                    libc::close(stdin_write);
+                    libc::close(stdout_read);
+                }
+
+                libc::dup2(stdin_read, 0);
+                libc::dup2(stdout_write, 1);
 
                 if has_stderr_pipe {
                     libc::dup2(stderr_pipe[1], 2);
                     libc::close(stderr_pipe[0]);
                     libc::close(stderr_pipe[1]);
                 } else {
-                    libc::dup2(slave, 2);
+                    libc::dup2(stdout_write, 2);
                 }
 
-                if slave > 2 {
-                    libc::close(slave);
+                if stdin_read > 2 {
+                    libc::close(stdin_read);
+                }
+                if stdout_write > 2 && stdout_write != stdin_read {
+                    libc::close(stdout_write);
                 }
 
                 // Set environment
-                libc::setenv(b"TERM\0".as_ptr() as _, b"xterm-256color\0".as_ptr() as _, 1);
+                if use_pty {
+                    libc::setenv(b"TERM\0".as_ptr() as _, b"xterm-256color\0".as_ptr() as _, 1);
+                } else {
+                    libc::setenv(b"TERM\0".as_ptr() as _, b"dumb\0".as_ptr() as _, 1);
+                }
                 libc::setenv(b"HOME\0".as_ptr() as _, b"/root\0".as_ptr() as _, 1);
                 libc::setenv(b"PATH\0".as_ptr() as _, b"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\0".as_ptr() as _, 1);
                 libc::setenv(b"SHELL\0".as_ptr() as _, b"/bin/sh\0".as_ptr() as _, 1);
@@ -104,13 +137,19 @@ impl ShellSession {
 
         // Parent
         unsafe {
-            libc::close(slave);
+            libc::close(stdin_read);
+            if stdin_read != stdout_write {
+                libc::close(stdout_write);
+            }
             if has_stderr_pipe {
                 libc::close(stderr_pipe[1]);
             }
         }
 
-        set_nonblocking(master);
+        set_nonblocking(stdin_write);
+        if stdin_write != stdout_read {
+            set_nonblocking(stdout_read);
+        }
         let stderr_fd = if has_stderr_pipe {
             set_nonblocking(stderr_pipe[0]);
             Some(stderr_pipe[0])
@@ -119,15 +158,16 @@ impl ShellSession {
         };
 
         info!(
-            "Spawned shell session: local_id={}, remote_id={}, v2={}, pid={}, cmd={:?}",
-            local_id, remote_id, v2, pid, command
+            "Spawned shell session: local_id={}, remote_id={}, v2={}, pid={}, cmd={:?}, pty={}",
+            local_id, remote_id, v2, pid, command, use_pty
         );
 
         Ok(ShellSession {
             local_id,
             remote_id,
             v2,
-            master_fd: master,
+            stdin_fd: stdin_write,
+            stdout_fd: stdout_read,
             stderr_fd,
             child_pid: pid,
             finished: false,
@@ -136,15 +176,15 @@ impl ShellSession {
 
     /// Write data to shell's stdin
     pub fn write_stdin(&self, data: &[u8]) -> io::Result<()> {
-        let mut file = unsafe { std::fs::File::from_raw_fd(self.master_fd) };
+        let mut file = unsafe { std::fs::File::from_raw_fd(self.stdin_fd) };
         let result = file.write_all(data);
         std::mem::forget(file); // Don't close the fd
         result
     }
 
-    /// Read available data from shell's stdout (PTY master)
+    /// Read available data from shell's stdout (PTY master or stdout pipe)
     pub fn read_stdout(&self) -> io::Result<Option<Vec<u8>>> {
-        read_nonblocking(self.master_fd)
+        read_nonblocking(self.stdout_fd)
     }
 
     /// Read available data from stderr pipe (only for v2 single-command)
@@ -179,7 +219,10 @@ impl ShellSession {
 
     pub fn cleanup(&mut self) {
         unsafe {
-            libc::close(self.master_fd);
+            libc::close(self.stdin_fd);
+            if self.stdin_fd != self.stdout_fd {
+                libc::close(self.stdout_fd);
+            }
             if let Some(fd) = self.stderr_fd.take() {
                 libc::close(fd);
             }
