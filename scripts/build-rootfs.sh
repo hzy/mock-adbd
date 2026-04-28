@@ -66,6 +66,36 @@ tar xzf "$OUTPUT_DIR/$MINIROOTFS" -C "$ROOTFS_DIR"
 cp "$ADBD_BINARY" "$ROOTFS_DIR/usr/bin/mock-adbd"
 chmod 755 "$ROOTFS_DIR/usr/bin/mock-adbd"
 
+# --- Step 4.5: Add Android mock filesystem shape ---
+echo "Adding Android mock filesystem shape..."
+mkdir -p "$ROOTFS_DIR/data/local/tmp"
+mkdir -p "$ROOTFS_DIR/sdcard"
+mkdir -p "$ROOTFS_DIR/system/bin"
+mkdir -p "$ROOTFS_DIR/system/xbin"
+
+# Android commonly expects shell at /system/bin/sh
+ln -sf /bin/sh "$ROOTFS_DIR/system/bin/sh"
+
+# Mock getprop command
+cat > "$ROOTFS_DIR/bin/getprop" <<'GETPROP_EOF'
+#!/bin/sh
+if [ -z "$1" ]; then
+    echo "[ro.build.version.sdk]: [30]"
+    echo "[ro.product.model]: [MockDevice]"
+    echo "[ro.product.manufacturer]: [Mock]"
+    echo "[ro.build.version.release]: [11]"
+else
+    case "$1" in
+        ro.build.version.sdk) echo "30" ;;
+        ro.product.model) echo "MockDevice" ;;
+        ro.product.manufacturer) echo "Mock" ;;
+        ro.build.version.release) echo "11" ;;
+        *) echo "" ;;
+    esac
+fi
+GETPROP_EOF
+chmod 755 "$ROOTFS_DIR/bin/getprop"
+
 # --- Step 5: Install kernel modules for virtio-net ---
 echo "Installing kernel modules..."
 KTMP="$OUTPUT_DIR/km-tmp"

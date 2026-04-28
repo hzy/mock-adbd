@@ -188,9 +188,29 @@ adb disconnect "$MOCK2_SERIAL" 2>/dev/null || true
 kill "$MOCK2_PID" 2>/dev/null || true
 wait "$MOCK2_PID" 2>/dev/null || true
 
-# ============================================================
+# --- Test 10: Android filesystem shape mock ---
 echo ""
-echo "========================================"
+echo "[10/10] Android filesystem shape mock..."
+
+OUTPUT=$(timeout 10 adb -s "$ADB_SERIAL" shell "ls -d /data/local/tmp" 2>&1)
+assert_contains "/data/local/tmp exists" "/data/local/tmp" "$OUTPUT"
+
+OUTPUT=$(timeout 10 adb -s "$ADB_SERIAL" shell "ls -d /sdcard" 2>&1)
+assert_contains "/sdcard exists" "/sdcard" "$OUTPUT"
+
+OUTPUT=$(timeout 10 adb -s "$ADB_SERIAL" shell "ls -d /system/bin" 2>&1)
+assert_contains "/system/bin exists" "/system/bin" "$OUTPUT"
+
+OUTPUT=$(timeout 10 adb -s "$ADB_SERIAL" shell "/system/bin/sh -c 'echo shell_mock_ok'" 2>&1)
+assert_contains "/system/bin/sh executes correctly" "shell_mock_ok" "$OUTPUT"
+
+OUTPUT=$(timeout 10 adb -s "$ADB_SERIAL" shell "getprop ro.build.version.sdk" 2>&1)
+assert_contains "getprop mock (sdk)" "30" "$OUTPUT"
+
+OUTPUT=$(timeout 10 adb -s "$ADB_SERIAL" shell "getprop ro.product.model" 2>&1)
+assert_contains "getprop mock (model)" "MockDevice" "$OUTPUT"
+
+# ============================================================
 echo "  Results: $PASS passed, $FAIL failed (total $TOTAL)"
 echo "========================================"
 
