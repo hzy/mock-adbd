@@ -39,9 +39,10 @@ impl SyncSession {
         }
     }
 
-    pub fn handle_data(&mut self, data: &[u8]) -> Vec<u8> {
+    pub fn handle_data(&mut self, data: &[u8]) -> (Vec<u8>, bool) {
         self.buffer.extend_from_slice(data);
         let mut response = Vec::new();
+        let mut should_quit = false;
 
         loop {
             match self.state {
@@ -53,6 +54,7 @@ impl SyncSession {
                     let length = u32::from_le_bytes(self.buffer[4..8].try_into().unwrap()) as usize;
                     
                     if id == ID_QUIT {
+                        should_quit = true;
                         self.buffer.drain(0..8);
                         break;
                     }
@@ -123,6 +125,7 @@ impl SyncSession {
                                 Ok(f) => {
                                     self.current_file = Some(f);
                                     self.state = SyncState::ReceivingFile;
+                                    debug!("SyncState changed to ReceivingFile");
                                 }
                                 Err(e) => {
                                     error!("sync SEND create err: {}", e);
@@ -171,11 +174,13 @@ impl SyncSession {
                     let length = u32::from_le_bytes(self.buffer[4..8].try_into().unwrap()) as usize;
                     
                     if id == ID_DONE {
+                        debug!("sync DONE received");
                         self.buffer.drain(0..8);
                         self.current_file = None;
                         self.state = SyncState::Idle;
                         response.extend_from_slice(&ID_OKAY.to_le_bytes());
                         response.extend_from_slice(&0u32.to_le_bytes());
+                        debug!("sync DONE processed, sent OKAY");
                         continue;
                     }
                     
@@ -184,7 +189,7 @@ impl SyncSession {
                             break;
                         }
                         if let Some(f) = &mut self.current_file {
-                            let _ = f.write_all(&self.buffer[8..8 + length]);
+                            let _ = f.write_all(&self.buffer[8..8 + length]); debug!("sync DATA {} written", length);
                         }
                         self.buffer.drain(0..8 + length);
                     } else {
@@ -195,6 +200,6 @@ impl SyncSession {
                 }
             }
         }
-        response
+        (response, should_quit)
     }
 }

@@ -208,8 +208,9 @@ fn handle_connection(mut stream: TcpStream) -> io::Result<()> {
                         let okay = AdbMessage::okay(local_id, remote_id);
                         send_message(&mut stream, &okay)?;
 
+                        let mut should_remove = false;
                         if let Some(sync_sess) = sessions.sync_sessions.get_mut(&local_id) {
-                            let resp_data = sync_sess.handle_data(&msg.data);
+                            let (resp_data, should_quit) = sync_sess.handle_data(&msg.data);
                             if !resp_data.is_empty() {
                                 // Split large responses into multiple WRTEs
                                 for chunk in resp_data.chunks(protocol::MAX_PAYLOAD as usize) {
@@ -217,6 +218,13 @@ fn handle_connection(mut stream: TcpStream) -> io::Result<()> {
                                     send_message(&mut stream, &wrte)?;
                                 }
                             }
+                            should_remove = should_quit;
+                        }
+                        
+                        if should_remove {
+                            let clse = AdbMessage::clse(local_id, remote_id);
+                            send_message(&mut stream, &clse)?;
+                            sessions.sync_sessions.remove(&local_id);
                         } else if let Some(session) = sessions.get_mut(local_id) {
                             if session.v2 {
                                 // Parse shell v2 frames from the data
